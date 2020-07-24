@@ -5,11 +5,14 @@ from datetime import datetime
 
 np.random.seed(228)
 
+
+#подключение к БД
 mongo_client = pymongo.MongoClient(port=27017)
 db = mongo_client["neuralNetwork"]
 
 alpha = 0.05
 
+#функции активации
 def relu(x):
     return (x > 0) * x
 
@@ -30,17 +33,17 @@ def tanh2deriv(output):
     return 1 - (output ** 2)
 
 
+#обучение
 def learnNetwork():
     hidden_size = 256
     users_data = []
     output_check = []
 
-    #f = open(os.getcwd() + "/Scripts/projects/skeleton/DeleteThatPls/usersDataSet.txt")
     f = open("usersDataSet.txt")
     raw_clients = f.readlines()
     f.close()
 
-    #f = open(os.getcwd() + "/Scripts/projects/skeleton/DeleteThatPls/GoodsDataSet.txt")
+
     f = open("GoodsDataSet.txt")
     raw_goods = f.readlines()
     f.close()
@@ -64,21 +67,25 @@ def learnNetwork():
     users_data = np.array(users_data)
     output_check = np.array(output_check)
 
+    #инициализация весов
     weights_0_1 = 2 * np.random.rand(input_lenght, hidden_size) - 1
     weights_1_2 = 2 * np.random.rand(hidden_size, output_lenght) - 1
 
     for iteration in range(3):
         for i in range(len(users_data)):
+            #предугадывание
             layer_0 = np.array(users_data[i : i + 1])            
             layer_1 = tanh(np.dot(layer_0, weights_0_1))
             layer_2 = sigmoid(np.dot(layer_1, weights_1_2))
 
+            #ошибка для вывода
             layer_2_error = np.sum((layer_2 - output_check[i : i + 1]) ** 2)
 
-
+            #правильный ответ
             answer = output_check[i:i+1]
 
-            for j in range (len(layer_2)):            
+            for j in range (len(layer_2)):
+                #корректирование ошибки
                 layer_2_delta = layer_2[j] - answer[j]
                 layer_1_delta = layer_2_delta.dot(weights_1_2.T) * tanh2deriv(layer_1)
 
@@ -94,6 +101,7 @@ def learnNetwork():
                 #print(layer_2)
                      
 
+    #тестирование после обучения
     totalErr = []
     print("Final test")
     for i in range(len(users_data)):        
@@ -109,6 +117,7 @@ def learnNetwork():
     safe_widths([weights_0_1.tolist(), weights_1_2.tolist()])
 
 
+#вернуть предсказание
 def returnPrediction(user_data):
     goods_data = db.goods.find({})
 
@@ -130,6 +139,8 @@ def returnPrediction(user_data):
     output.sort(reverse = True)
     return (output[0:16])
 
+
+#добавление товара
 def addGoods(goods_name, goods_tags):
     id = db.goods.find({}).sort("_id", -1).limit(1)[0]["_id"] + 1
     db.goods.insert_one({"name": goods_name, "tag_id": goods_tags, "_id": id})
@@ -144,40 +155,17 @@ def addGoods(goods_name, goods_tags):
     safe_widths([weights_0_1, np.hstack((weights_1_2,
                 np.random.rand(1,len(weights_1_2)).T)).tolist()])
 
-def safe_widths(weights_arr):
-    db.weights.insert_one({"weights_0_1": weights_arr[0], "weights_1_2":weights_arr[1],
-                           "dateOfCreation": datetime.now().strftime("%Y.%m.%d %H:%M:%S")})
-
 
 def increaseWeight(user_data, goods_id):
-    weights_arr = db.weights.find({}).sort("dateOfCreation", -1).limit(1)
-    weights_0_1 = None
-    weights_1_2 = None
-    for item in weights_arr:
-        weights_0_1 = np.array(item["weights_0_1"])
-        weights_1_2 = np.array(item["weights_1_2"])
-
-    pers_weight_1_2 = weights_1_2.T[goods_id]
-
-    for i in range(1):
-        layer_1 = tanh(np.dot(user_data, weights_0_1))
-        layer_2 = sigmoid(np.dot(layer_1, pers_weight_1_2))
-
-        layer_2_delta = layer_2 - 1
-        print(layer_2_delta)
-        layer_1_delta = np.dot(layer_2_delta, pers_weight_1_2) * tanh2deriv(layer_1)
-
-        layer_2_error = layer_2_delta * 0.5
-        layer_1_error = layer_1_delta * 0.001
-
-        pers_weight_1_2 -= layer_2_error
-        weights_0_1 -= layer_1_error
-
-    weights_1_2.T[goods_id : goods_id + 1] = pers_weight_1_2
-    safe_widths([weights_0_1.tolist(), weights_1_2.tolist()])
+    return changeByValue(user_data, goods_id, 1)
 
 
 def decreaseWeight(user_data, goods_id):
+    return changeByValue(user_data, goods_id, 0)
+
+
+#изменить вес товара по данным пользователям
+def changeByValue(user_data, goods_id, layer2_value):
     weights_arr = db.weights.find({}).sort("dateOfCreation", -1).limit(1)
     weights_0_1 = None
     weights_1_2 = None
@@ -191,18 +179,26 @@ def decreaseWeight(user_data, goods_id):
         layer_1 = tanh(np.dot(user_data, weights_0_1))
         layer_2 = sigmoid(np.dot(layer_1, pers_weight_1_2))
 
-        layer_2_delta = layer_2 - 0
+        layer_2_delta = layer_2 - layer2_value
         print(layer_2_delta)
         layer_1_delta = np.dot(layer_2_delta, pers_weight_1_2) * tanh2deriv(layer_1)
 
-        layer_2_error = layer_2_delta * 0.5
-        layer_1_error = layer_1_delta * 0.01
+        layer_2_error = layer_2_delta * 0.1
+        layer_1_error = layer_1_delta * 0.001
 
-        pers_weight_1_2 -= layer_2_error
-        weights_0_1 -= layer_1_error
+        pers_weight_1_2 -= layer_1.dot(layer_2_error)
+        user_data_nparr = np.array(user_data)
+        sheet = np.array([user_data_nparr]).T.dot([layer_1_error])
+        weights_0_1 -= sheet
 
     weights_1_2.T[goods_id : goods_id + 1] = pers_weight_1_2
     safe_widths([weights_0_1.tolist(), weights_1_2.tolist()])
+    return("re")
+
+
+def safe_widths(weights_arr):
+    db.weights.insert_one({"weights_0_1": weights_arr[0], "weights_1_2":weights_arr[1],
+                           "dateOfCreation": datetime.now().strftime("%Y.%m.%d %H:%M:%S")})
 
 
 #decreaseWeight([0.1,1,0,0,0,0,1,0,0,0,0], 100)
